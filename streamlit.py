@@ -40,11 +40,17 @@ def setup_page() -> None:
         .block-container { padding-top: 1rem; padding-bottom: 2rem; }
         h1 { letter-spacing: -0.02em; }
         .twin-section {
-            border: 1px solid rgba(49, 51, 63, 0.12);
+            border: 1px solid rgba(49, 51, 63, 0.22);
             border-radius: 12px;
             padding: 1rem 1.25rem;
             margin: 0.75rem 0 1.25rem 0;
-            background: linear-gradient(180deg, rgba(250,250,252,0.9) 0%, rgba(255,255,255,0.95) 100%);
+            background: #f6f8fb;
+            color: #0f172a;
+            box-shadow: 0 1px 4px rgba(15, 23, 42, 0.08);
+        }
+        .twin-section h3, .twin-section p {
+            color: #0f172a !important;
+            opacity: 1 !important;
         }
         /* Improve readability in room-comparison table. */
         div[data-testid="stDataFrame"] div[role="table"] {
@@ -461,7 +467,8 @@ def owner_dashboard(data_store: Dict[str, Dict]) -> None:
     top = st.columns([2, 1])
     with top[0]:
         st.markdown(
-            f'<div class="twin-section"><h3 style="margin:0;">📍 Property — {selected_room}</h3></div>',
+            f'<div class="twin-section"><h3 style="margin:0 0 0.25rem 0;">📍 Property — {selected_room}</h3>'
+            f"<p style='margin:0;'>Current vs forecast from the same entity.</p></div>",
             unsafe_allow_html=True,
         )
     with top[1]:
@@ -585,4 +592,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
