@@ -5,7 +5,14 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 import streamlit as st
-from streamlit_autorefresh import st_autorefresh
+
+try:
+    from streamlit_autorefresh import st_autorefresh
+
+    _HAS_AUTOREFRESH = True
+except ImportError:
+    st_autorefresh = None  # type: ignore[assignment, misc]
+    _HAS_AUTOREFRESH = False
 
 # ML uses NumPy only (no sklearn/scipy) so Streamlit runs reliably on Python 3.13+
 # where some scipy builds can fail import with obscure errors.
@@ -770,7 +777,14 @@ def main() -> None:
     """Application entry point."""
     setup_page()
 
-    st_autorefresh(interval=5000, key="auto_refresh")
+    if _HAS_AUTOREFRESH and st_autorefresh is not None:
+        st_autorefresh(interval=5000, key="auto_refresh")
+    elif not st.session_state.get("_autorefresh_hint_shown"):
+        st.session_state["_autorefresh_hint_shown"] = True
+        st.sidebar.warning(
+            "Auto-refresh is off: add **streamlit-autorefresh** to `requirements.txt` at your repo root, "
+            "then redeploy. Use **Refresh live data** for manual updates."
+        )
 
     refresh_clicked = render_sidebar_controls("data_store" in st.session_state)
 
@@ -790,6 +804,23 @@ def main() -> None:
 
     render_status_bar(st.session_state["last_update"])
     st.info("Live simulation updates approximately every 5 seconds; use **Refresh live data** for an immediate step.")
+
+    st.markdown("### Model Input Data (Features)")
+
+    sample_inputs = []
+    for room in ROOMS:
+        cur = st.session_state["data_store"][room]["current"]
+        sample_inputs.append(
+            {
+                "Room": room,
+                "AQI": cur["aqi"],
+                "Temperature": cur["temperature"],
+                "Humidity": cur["humidity"],
+            }
+        )
+
+    df_inputs = pd.DataFrame(sample_inputs)
+    st.dataframe(df_inputs)
 
     render_system_architecture()
 
