@@ -791,23 +791,6 @@ def main() -> None:
     render_status_bar(st.session_state["last_update"])
     st.info("Live simulation updates approximately every 5 seconds; use **Refresh live data** for an immediate step.")
 
-    st.markdown("### Model Input Data (Features)")
-
-    sample_inputs = []
-    for room in ROOMS:
-        cur = st.session_state["data_store"][room]["current"]
-        sample_inputs.append(
-            {
-                "Room": room,
-                "AQI": cur["aqi"],
-                "Temperature": cur["temperature"],
-                "Humidity": cur["humidity"],
-            }
-        )
-
-    df_inputs = pd.DataFrame(sample_inputs)
-    st.dataframe(df_inputs)
-
     render_system_architecture()
 
     st.markdown("## Layer documentation")
