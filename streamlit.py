@@ -5,6 +5,7 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 import streamlit as st
+from streamlit_autorefresh import st_autorefresh
 
 # ML uses NumPy only (no sklearn/scipy) so Streamlit runs reliably on Python 3.13+
 # where some scipy builds can fail import with obscure errors.
@@ -29,11 +30,10 @@ def setup_page() -> None:
     """Configure Streamlit page and shared style."""
     st.set_page_config(
         page_title=APP_TITLE,
-        page_icon="🌬️",
+        page_icon="📊",
         layout="wide",
         initial_sidebar_state="expanded",
     )
-    # Light professional dashboard styling (Streamlit-safe).
     st.markdown(
         """
         <style>
@@ -48,11 +48,28 @@ def setup_page() -> None:
             color: #0f172a;
             box-shadow: 0 1px 4px rgba(15, 23, 42, 0.08);
         }
-        .twin-section h3, .twin-section p {
+        .twin-section h3, .twin-section h4, .twin-section p {
             color: #0f172a !important;
             opacity: 1 !important;
         }
-        /* Improve readability in room-comparison table. */
+        /* High contrast: Streamlit theme can inherit light text onto light boxes — force readable colors. */
+        .arch-flow {
+            font-family: ui-monospace, "Cascadia Mono", "Consolas", monospace;
+            font-size: 1.08rem;
+            font-weight: 600;
+            line-height: 1.55;
+            padding: 1rem 1.25rem;
+            background-color: #dbeafe !important;
+            color: #0f172a !important;
+            border-radius: 8px;
+            border: 1px solid #2563eb;
+            border-left: 5px solid #1d4ed8;
+            margin: 0.5rem 0 1rem 0;
+            box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.6);
+        }
+        .arch-flow, .arch-flow * {
+            color: #0f172a !important;
+        }
         div[data-testid="stDataFrame"] div[role="table"] {
             font-size: 0.98rem;
             line-height: 1.35;
@@ -61,14 +78,16 @@ def setup_page() -> None:
         """,
         unsafe_allow_html=True,
     )
-    st.title(f"🌬️ {APP_TITLE}")
-    st.caption("Digital Twin + ML — smart air quality monitoring prototype")
+    col1, col2 = st.columns([1, 6])
+    with col1:
+        st.image("https://cdn-icons-png.flaticon.com/512/2933/2933245.png", width=60)
+    with col2:
+        st.title(APP_TITLE)
+        st.caption("Digital Twin and machine learning system for indoor air quality (academic demonstration)")
 
 
 def get_aqi_health_info(aqi: int) -> Tuple[str, str, str]:
-    """
-    Map AQI value to EPA-style band for messaging and badge color.
-    """
+    """Map AQI value to EPA-style band for messaging and badge color."""
     if aqi < 50:
         return "Good", "Air quality is satisfactory; little or no risk.", "green"
     if aqi <= 100:
@@ -77,9 +96,7 @@ def get_aqi_health_info(aqi: int) -> Tuple[str, str, str]:
 
 
 def get_health_risk_level(aqi: int) -> Tuple[str, str]:
-    """
-    Compact risk label for panels (Safe / Moderate Risk / High Risk).
-    """
+    """Compact risk label for panels (Safe / Moderate Risk / High Risk)."""
     if aqi < 50:
         return "Safe", "green"
     if aqi <= 100:
@@ -89,7 +106,34 @@ def get_health_risk_level(aqi: int) -> Tuple[str, str]:
 
 def get_status_emoji(color: str) -> str:
     """Visual indicator used across badges, tables, and risk labels."""
-    return {"green": "🟢", "orange": "🟠", "red": "🔴"}.get(color, "⚪")
+    return {"green": "●", "orange": "●", "red": "●"}.get(color, "○")
+
+
+def get_health_insights(aqi: int, temperature: float, humidity: float) -> Tuple[int, str, str]:
+    score = 100 - (aqi * 0.5 + abs(temperature - 24) * 2 + abs(humidity - 50) * 1.5)
+    score = max(0, min(100, int(score)))
+
+    if score > 80:
+        status = "Excellent (Safe)"
+        advice = "Perfect air conditions. Enjoy your environment."
+    elif score > 60:
+        status = "Good (Monitor)"
+        advice = "Slight discomfort possible. Keep ventilation."
+    else:
+        status = "Poor (Unhealthy)"
+        advice = "Unhealthy conditions. Consider ventilation or purifier."
+
+    return score, status, advice
+
+
+def get_property_quality(humidity: float) -> Tuple[str, str]:
+    if 40 <= humidity <= 60:
+        return "Good (Safe)", "Optimal conditions, no risk"
+    if humidity < 40:
+        return "Dry (Attention)", "May cause cracks in furniture/walls"
+    if humidity <= 70:
+        return "Moderate (Monitor)", "Monitor for potential dampness"
+    return "High Risk (Critical)", "Risk of mold and structural damage"
 
 
 # -----------------------------
@@ -106,7 +150,6 @@ def generate_synthetic_training_data(n_samples: int = 900) -> Tuple[np.ndarray, 
     hum = rng.uniform(28.0, 78.0, n_samples)
     X = np.column_stack([aqi, temp, hum])
 
-    # Next hour: mild coupling + noise (demo-friendly, explains well in viva).
     aqi_next = np.clip(
         aqi + 0.12 * (temp - 22.0) - 0.07 * (hum - 50.0) + rng.normal(0.0, 7.5, n_samples),
         0,
@@ -132,8 +175,7 @@ def train_ml_pipeline() -> np.ndarray:
     X, y = generate_synthetic_training_data()
     Xd = _design_matrix(X)
     n_features = Xd.shape[1]
-    ridge = 0.15  # mild L2 — stabilizes fit on synthetic data
-    # Normal equations: (X'X + λI) W = X'Y
+    ridge = 0.15
     ata = Xd.T @ Xd + ridge * np.eye(n_features)
     aty = Xd.T @ y.astype(np.float64)
     weights: np.ndarray = np.linalg.solve(ata, aty)
@@ -145,6 +187,33 @@ def get_ml_model() -> np.ndarray:
     if "ml_model" not in st.session_state:
         st.session_state["ml_model"] = train_ml_pipeline()
     return st.session_state["ml_model"]
+
+
+def evaluate_model_on_training_data(weights: np.ndarray) -> Dict[str, np.ndarray]:
+    """
+    MAE and RMSE on the same synthetic dataset used for training (in-sample metrics).
+    """
+    X, y = generate_synthetic_training_data()
+    Xd = _design_matrix(X)
+    pred = Xd @ weights
+    err = y.astype(np.float64) - pred
+    mae_per = np.mean(np.abs(err), axis=0)
+    rmse_per = np.sqrt(np.mean(err**2, axis=0))
+    return {
+        "mae_per": mae_per,
+        "rmse_per": rmse_per,
+        "mae_mean": float(np.mean(mae_per)),
+        "rmse_mean": float(np.mean(rmse_per)),
+    }
+
+
+def weights_to_dataframe(weights: np.ndarray) -> pd.DataFrame:
+    """Human-readable coefficient table for the multi-output ridge model."""
+    return pd.DataFrame(
+        weights,
+        index=["Bias", "AQI", "Temperature (°C)", "Humidity (%)"],
+        columns=["Predicted next-hour AQI", "Predicted next-hour temp (°C)", "Predicted next-hour humidity (%)"],
+    ).round(5)
 
 
 # -----------------------------
@@ -209,7 +278,6 @@ def create_room_entity(room_name: str, previous_current: Optional[Dict]) -> Dict
     return {
         "room_id": room_name,
         "current": current,
-        # Filled by predict_aqi() once ML runs (keeps structure backward-compatible).
         "predicted": {"aqi": None, "temperature": None, "humidity": None},
     }
 
@@ -276,7 +344,6 @@ def build_trend_data(
     past_times = [now - timedelta(minutes=interval_min * (points - 1 - i)) for i in range(points)]
 
     rng = random.Random((hash(current_aqi) ^ seed_salt) % (2**31))
-    # Random walk with tight steps — visually smoother than sparse big jumps.
     values: List[float] = []
     v = float(max(18, current_aqi - rng.uniform(10, 22)))
     for _ in range(points - 1):
@@ -288,7 +355,7 @@ def build_trend_data(
     hist = [int(round(x)) for x in values]
 
     if predicted_aqi is None:
-        df = pd.DataFrame({"Time": past_times, "🟢 AQI (live trend)": hist})
+        df = pd.DataFrame({"Time": past_times, "AQI (live trend)": hist})
         return df.set_index("Time")
 
     fut_time = now + timedelta(hours=1)
@@ -298,11 +365,160 @@ def build_trend_data(
     df = pd.DataFrame(
         {
             "Time": times_ext,
-            "🟢 AQI (live trend)": hist_ext,
-            "🔮 AQI (+1h forecast)": forecast_series,
+            "AQI (live trend)": hist_ext,
+            "AQI (+1 hour forecast)": forecast_series,
         }
     )
     return df.set_index("Time")
+
+
+# -----------------------------
+# Academic / layered documentation (UI)
+# -----------------------------
+def render_system_architecture() -> None:
+    st.markdown("## System Architecture")
+    st.markdown(
+        '<div class="arch-flow" style="background-color:#dbeafe;color:#0f172a;">'
+        '<span style="color:#0f172a !important;">'
+        "IoT / Data Source → Data Processing → Machine Learning → Digital Twin → Visualization (Dashboard)"
+        "</span></div>",
+        unsafe_allow_html=True,
+    )
+    c1, c2, c3, c4, c5 = st.columns(5)
+    layers = [
+        ("Data Source", "Simulated IoT sensors producing AQI, temperature, and humidity streams."),
+        ("Processing", "Cleaning and preprocessing of incoming readings before model input."),
+        ("ML", "Multi-output ridge regression for next-hour state prediction."),
+        ("Digital Twin", "Virtual room entities with stateful drift and synchronized forecasts."),
+        ("Visualization", "Streamlit dashboards for tenant and owner perspectives."),
+    ]
+    for col, (title, desc) in zip((c1, c2, c3, c4, c5), layers):
+        with col:
+            st.markdown(f"**{title}**")
+            st.caption(desc)
+    st.divider()
+
+
+def render_system_modules() -> None:
+    st.markdown("## System Modules")
+    modules = [
+        "Data Collection Module — generates and ingests simulated sensor time series.",
+        "Data Processing Module — prepares observations for the learning layer (see `preprocess_data`).",
+        "Machine Learning Module — trains and applies ridge regression for horizon-one prediction.",
+        "Digital Twin Simulation Module — maintains per-room virtual state with stochastic drift.",
+        "Dashboard Visualization Module — role-specific Streamlit views and charts.",
+    ]
+    for m in modules:
+        st.markdown(f"- {m}")
+    st.divider()
+
+
+def render_data_source_layer() -> None:
+    st.markdown("### Data Source Layer")
+    st.write(
+        "This demonstration uses **simulated IoT sensor data**: Air Quality Index (AQI), "
+        "temperature (°C), and relative humidity (%). "
+        "Readings are not from physical hardware; they are generated to mimic realistic variability."
+    )
+    st.info(
+        "Successive samples evolve through **stochastic drift** (Gaussian perturbations), "
+        "approximating slow indoor environmental dynamics and sensor noise."
+    )
+
+
+def render_data_processing_layer() -> None:
+    st.markdown("### Data Processing Layer")
+    st.write(
+        "Incoming sensor data is **preprocessed** before it is passed to the machine learning model. "
+        "The pipeline reserves hooks for normalization, validation, and cleaning; "
+        "the current implementation applies a pass-through while preserving the architectural boundary."
+    )
+    st.caption("Normalization and explicit cleaning rules can be extended inside `preprocess_data()` without changing model code.")
+
+
+def render_machine_learning_section(weights: np.ndarray) -> None:
+    st.markdown("## Machine Learning Model")
+    st.write(
+        "**Model:** Multi-output ridge regression (closed-form, NumPy implementation). "
+        "**Inputs:** current AQI, temperature, humidity (plus intercept). "
+        "**Outputs:** predicted AQI, temperature, and humidity for the **next hour**."
+    )
+    st.markdown(
+        "**Training:** The regressor is fit on a **synthetic dataset** (deterministic seed) where "
+        "each row maps current environmental state to a plausible next-hour state with coupled dynamics and noise. "
+        "**Inference:** For each digital twin, the current state vector is multiplied by the learned weight matrix "
+        "to produce a multi-target forecast, then clipped to valid physical ranges."
+    )
+    st.markdown("##### Model coefficients (weights)")
+    st.caption("Rows correspond to bias and input features; columns to the three predicted targets.")
+    st.dataframe(weights_to_dataframe(weights), use_container_width=True)
+    st.divider()
+
+
+def render_simulation_engine() -> None:
+    st.markdown("## Simulation Engine")
+    st.write(
+        "The system simulates **real-time environmental change** using **stochastic drift**: "
+        "each update applies small random adjustments to the previous live state per room. "
+        "This mimics continuous IoT polling and gradual indoor air evolution without external APIs."
+    )
+    st.divider()
+
+
+def render_model_evaluation(weights: np.ndarray) -> None:
+    st.markdown("## Model Evaluation")
+    st.write(
+        "Error metrics below are computed on the **same synthetic training set** used to fit the ridge model "
+        "(in-sample evaluation suitable for this academic demo)."
+    )
+    ev = evaluate_model_on_training_data(weights)
+    m1, m2 = st.columns(2)
+    m1.metric("Mean MAE (average over outputs)", f"{ev['mae_mean']:.4f}")
+    m2.metric("Mean RMSE (average over outputs)", f"{ev['rmse_mean']:.4f}")
+    labels = ["AQI", "Temperature (°C)", "Humidity (%)"]
+    detail = pd.DataFrame(
+        {
+            "Target": labels,
+            "MAE": ev["mae_per"],
+            "RMSE": ev["rmse_per"],
+        }
+    )
+    st.caption("Per-target breakdown")
+    st.dataframe(detail, use_container_width=True, hide_index=True)
+    st.divider()
+
+
+def render_visualization_layer_note() -> None:
+    st.markdown("## Visualization Layer")
+    st.write(
+        "The **tenant** and **owner** dashboards below implement the visualization layer: "
+        "interactive exploration of digital twin state, forecasts, and operational comparisons."
+    )
+    st.divider()
+
+
+def render_digital_twin_representation(room_id: str, room_data: Dict, predictions: Dict) -> None:
+    ts = room_data["current"]["timestamp"]
+    ts_str = ts.strftime("%Y-%m-%d %H:%M:%S") if isinstance(ts, datetime) else str(ts)
+    st.markdown("### Digital Twin Representation")
+    st.markdown(
+        '<div class="twin-section">'
+        f'<h4 style="margin-top:0;">Room: {room_id}</h4>'
+        f"<p><b>Timestamp (live state):</b> {ts_str}</p>"
+        "<p><b>Current state:</b> "
+        f"AQI {room_data['current']['aqi']}, "
+        f"{room_data['current']['temperature']} °C, "
+        f"{room_data['current']['humidity']}% RH</p>"
+        "<p><b>Predicted state (+1 hour):</b> "
+        f"AQI {predictions['aqi']}, "
+        f"{predictions['temperature']} °C, "
+        f"{predictions['humidity']}% RH</p>"
+        "<p style='margin-bottom:0; font-size:0.95rem;'>"
+        "This digital twin is a <b>virtual replica</b> of a physical room, continuously updated using "
+        "simulated sensor data and the predictive model (next-hour state)."
+        "</p></div>",
+        unsafe_allow_html=True,
+    )
 
 
 # -----------------------------
@@ -336,82 +552,71 @@ def render_aqi_badge(color: str, status: str, aqi_value: int) -> None:
 
 
 def render_health_risk_panel(aqi: int) -> None:
-    """A / B / C feature: explicit health risk label."""
+    """Explicit health risk label."""
     label, tone = get_health_risk_level(aqi)
-    icon = "✅" if tone == "green" else ("⚠️" if tone == "orange" else "🚨")
     c1, c2 = st.columns([1, 2])
     with c1:
-        st.metric(f"{icon} Health risk", f"{get_status_emoji(tone)} {label}")
+        st.metric("Health risk (live)", f"{label}")
     with c2:
-        st.caption("Based on current AQI snapshot (demo rule-based mapping).")
+        st.caption("Derived from current AQI using a rule-based band mapping (demonstration).")
 
 
-def render_current_metrics(room_data: Dict, *, heading: str = "📡 Current state (live)") -> None:
-    """Live Digital Twin metrics — clearly separated from forecast."""
+def render_current_metrics(room_data: Dict, *, heading: str = "Current state (live sensors)") -> None:
     st.markdown(f"##### {heading}")
     c1, c2, c3 = st.columns(3)
     c1.metric(
         "AQI",
         room_data["current"]["aqi"],
-        help="AQI (Air Quality Index) indicates how clean or polluted the air is. Lower AQI means better air quality.",
+        help="Air Quality Index: lower values indicate cleaner air.",
     )
     c2.metric("Temperature (°C)", room_data["current"]["temperature"])
     c3.metric("Humidity (%)", room_data["current"]["humidity"])
 
 
 def render_predictions(predictions: Dict) -> None:
-    """Forecast section: ML output for +1 hour horizon."""
-    st.markdown("##### 🔮 Predicted state (+1 hour, ML)")
+    st.markdown("##### Predicted state (+1 hour, ML)")
     p1, p2, p3 = st.columns(3)
-    p1.metric(
-        "Predicted AQI",
-        predictions["aqi"],
-        help="Predicted using machine learning model.",
-    )
+    p1.metric("Predicted AQI", predictions["aqi"], help="Ridge regression forecast.")
     p2.metric("Predicted temp (°C)", predictions["temperature"])
     p3.metric("Predicted humidity (%)", predictions["humidity"])
 
 
 def render_forecast_insights(current_aqi: int, predictions: Dict) -> None:
-    """Future warning + risk on forecast path."""
     pred_aqi = int(predictions["aqi"])
     col_a, col_b = st.columns(2)
     with col_a:
         if pred_aqi > current_aqi:
-            st.warning("📈 Air quality **expected to worsen** in the next hour (predicted AQI is higher).")
+            st.warning("Forecast: air quality is **expected to worsen** in the next hour (higher predicted AQI).")
         elif pred_aqi < current_aqi:
-            st.success("📉 Predicted AQI is **lower** — conditions may improve.")
+            st.success("Forecast: predicted AQI is **lower**; conditions may improve.")
         else:
-            st.info("➡️ Predicted AQI is **near** the current level.")
+            st.info("Forecast: predicted AQI is **close** to the current level.")
     with col_b:
         risk_label, tone = get_health_risk_level(pred_aqi)
-        st.caption("Forecast risk band (from predicted AQI)")
+        st.caption("Risk band from predicted AQI")
         if tone == "green":
-            st.success(f"Forecast: {get_status_emoji(tone)} **{risk_label}**")
+            st.success(f"Forecast risk: **{risk_label}**")
         elif tone == "orange":
-            st.warning(f"Forecast: {get_status_emoji(tone)} **{risk_label}**")
+            st.warning(f"Forecast risk: **{risk_label}**")
         else:
-            st.error(f"Forecast: {get_status_emoji(tone)} **{risk_label}**")
+            st.error(f"Forecast risk: **{risk_label}**")
 
 
 def render_smart_alerts(current_aqi: int, predictions: Dict) -> None:
-    """Current danger + future danger (assignment alerts)."""
     pred_aqi = int(predictions["aqi"])
     if current_aqi > 150:
-        st.error("🛑 **Danger:** Current AQI exceeds 150 — take protective action.")
+        st.error("**Alert:** Current AQI exceeds 150 — protective action advised.")
     if pred_aqi > 150:
-        st.error("⚠️ **Future danger:** Predicted AQI crosses 150 within the next hour.")
+        st.error("**Alert:** Predicted AQI exceeds 150 within the next hour.")
 
 
 def render_danger_alert(aqi: int) -> None:
-    """Back-compat wrapper; smart alerts cover the full rule set."""
     if aqi > 150:
-        st.error("🛑 Dangerous air quality detected (live reading).")
+        st.error("Dangerous air quality on live reading (AQI > 150).")
 
 
 def tenant_dashboard(data_store: Dict[str, Dict]) -> None:
-    """Tenant-facing dashboard."""
-    st.header("🏠 Tenant dashboard")
+    st.markdown("#### Tenant dashboard")
     selected_room = st.selectbox("Select your room", ROOMS, index=0, key="tenant_room")
 
     room_data = preprocess_data(data_store[selected_room])
@@ -423,11 +628,7 @@ def tenant_dashboard(data_store: Dict[str, Dict]) -> None:
     aqi = int(room_data["current"]["aqi"])
     status, message, color = get_aqi_health_info(aqi)
 
-    st.markdown(
-        f'<div class="twin-section"><h3 style="margin:0 0 0.25rem 0;">🛰️ Live twin — {selected_room}</h3>'
-        f"<p style='margin:0;opacity:0.8'>Current vs forecast from the same entity.</p></div>",
-        unsafe_allow_html=True,
-    )
+    render_digital_twin_representation(selected_room, room_data, predictions)
 
     render_aqi_badge(color, status, aqi)
     render_health_risk_panel(aqi)
@@ -436,8 +637,18 @@ def tenant_dashboard(data_store: Dict[str, Dict]) -> None:
     with c_left:
         render_current_metrics(room_data)
     with c_right:
-        st.markdown("##### 🩺 Health advisory")
+        st.markdown("##### Health advisory (AQI band)")
         st.info(message)
+
+    score, status_label, advice = get_health_insights(
+        aqi,
+        float(room_data["current"]["temperature"]),
+        float(room_data["current"]["humidity"]),
+    )
+    st.markdown("##### Health intelligence")
+    st.metric("Composite health score", score)
+    st.write(f"Status: {status_label}")
+    st.info(advice)
 
     render_smart_alerts(aqi, predictions)
     render_danger_alert(aqi)
@@ -445,14 +656,13 @@ def tenant_dashboard(data_store: Dict[str, Dict]) -> None:
     render_predictions(predictions)
     render_forecast_insights(aqi, predictions)
 
-    st.markdown("##### 📈 AQI trend (smoothed history + forecast point)")
+    st.markdown("##### AQI trend (smoothed history and +1 hour point)")
     trend_df = build_trend_data(aqi, predicted_aqi=predictions["aqi"], seed_salt=hash(selected_room) % 997)
     st.line_chart(trend_df, use_container_width=True)
 
 
 def owner_dashboard(data_store: Dict[str, Dict]) -> None:
-    """Owner-facing dashboard with tenant context."""
-    st.header("🏢 Owner / operator dashboard")
+    st.markdown("#### Owner / operator dashboard")
     selected_room = st.selectbox("Select room", ROOMS, index=0, key="owner_room")
 
     room_data = preprocess_data(data_store[selected_room])
@@ -466,13 +676,11 @@ def owner_dashboard(data_store: Dict[str, Dict]) -> None:
 
     top = st.columns([2, 1])
     with top[0]:
-        st.markdown(
-            f'<div class="twin-section"><h3 style="margin:0 0 0.25rem 0;">📍 Property — {selected_room}</h3>'
-            f"<p style='margin:0;'>Current vs forecast from the same entity.</p></div>",
-            unsafe_allow_html=True,
-        )
+        st.caption("Property and tenant context")
     with top[1]:
-        st.markdown(f"**👤 Tenant:** {TENANT_MAP[selected_room]}")
+        st.markdown(f"**Assigned tenant:** {TENANT_MAP[selected_room]}")
+
+    render_digital_twin_representation(selected_room, room_data, predictions)
 
     render_aqi_badge(color, status, aqi)
     render_health_risk_panel(aqi)
@@ -480,15 +688,26 @@ def owner_dashboard(data_store: Dict[str, Dict]) -> None:
     render_current_metrics(room_data)
     st.caption(message)
 
+    humidity = float(room_data["current"]["humidity"])
+    quality, quality_msg = get_property_quality(humidity)
+    st.markdown("##### Property condition (humidity-driven)")
+    st.write(f"Status: {quality}")
+    if quality.startswith("Good"):
+        st.info(quality_msg)
+    elif quality.startswith("Moderate"):
+        st.warning(quality_msg)
+    else:
+        st.error(quality_msg)
+
     render_smart_alerts(aqi, predictions)
     render_danger_alert(aqi)
 
     act1, _ = st.columns([1, 3])
     with act1:
-        if st.button("📧 Notify tenant", key="notify_btn"):
+        if st.button("Notify tenant", key="notify_btn"):
             st.success(f"Notification queued for **{TENANT_MAP[selected_room]}**.")
 
-    st.markdown("##### 🏘️ Room comparison (all rooms)")
+    st.markdown("##### Room comparison (all rooms)")
     room_rows = []
     for room_name in ROOMS:
         cur = data_store[room_name]["current"]
@@ -496,7 +715,7 @@ def owner_dashboard(data_store: Dict[str, Dict]) -> None:
         room_rows.append(
             {
                 "Room": room_name,
-                "Status": f"{get_status_emoji(room_color)} {room_status}",
+                "Status": f"{room_status}",
                 "AQI": int(cur["aqi"]),
                 "Temperature (°C)": float(cur["temperature"]),
                 "Humidity (%)": float(cur["humidity"]),
@@ -511,83 +730,107 @@ def owner_dashboard(data_store: Dict[str, Dict]) -> None:
     worst_room = room_df.iloc[-1]
     c_best, c_worst = st.columns(2)
     with c_best:
-        st.success(f"✅ Best room: **{best_room['Room']}** (AQI {best_room['AQI']})")
+        st.success(f"Best air quality: **{best_room['Room']}** (AQI {best_room['AQI']}).")
     with c_worst:
-        st.error(f"🚨 Worst room: **{worst_room['Room']}** (AQI {worst_room['AQI']})")
+        st.error(f"Needs attention: **{worst_room['Room']}** (AQI {worst_room['AQI']}).")
 
     render_predictions(predictions)
     render_forecast_insights(aqi, predictions)
 
-    st.markdown("##### 📈 AQI trend (operations view)")
+    st.markdown("##### AQI trend (operations view)")
     trend_df = build_trend_data(aqi, predicted_aqi=predictions["aqi"], seed_salt=hash(selected_room) % 997)
     st.line_chart(trend_df, use_container_width=True)
 
 
-def render_sidebar_controls() -> Tuple[str, bool]:
-    """Role + manual refresh (triggers new drifted reading)."""
-    st.sidebar.header("🎛️ Controls")
-    role = st.sidebar.radio("Choose role", ["Tenant", "Owner"], index=0)
-    st.sidebar.markdown("---")
-    st.sidebar.caption(
-        "**Refresh live data** requests a new simulated poll; readings drift from the last state per room."
-    )
-    refresh_clicked = st.sidebar.button("🔄 Refresh live data", use_container_width=True)
-    return role, refresh_clicked
-
-
 def render_status_bar(last_update: datetime) -> None:
-    """Top status strip for presentation polish."""
     st.markdown(
-        f'<div style="display:flex;gap:1.5rem;align-items:center;flex-wrap:wrap;margin-bottom:0.5rem;">'
-        f'<span><b>🕐 Last updated</b> — {last_update.strftime("%Y-%m-%d %H:%M:%S")}</span>'
-        f"<span><b>🧠 Model</b> — Multi-output ridge regression (+1h, NumPy)</span>"
-        f"<span><b>🪢 Twin</b> — Stateful drift simulation</span>"
+        f'<div style="display:flex;gap:1.5rem;align-items:center;flex-wrap:wrap;margin-bottom:0.75rem;">'
+        f'<span><b>Last updated</b> — {last_update.strftime("%Y-%m-%d %H:%M:%S")}</span>'
+        f"<span><b>ML</b> — Multi-output ridge regression (+1 h)</span>"
+        f"<span><b>Twin</b> — Stateful drift simulation</span>"
+        f"<span><b>Mode</b> — Academic demo (no authentication)</span>"
         f"</div>",
         unsafe_allow_html=True,
     )
 
 
-def render_system_overview() -> None:
-    """Top-level project explanation for presentation and viva clarity."""
-    st.markdown("### 🧭 System Overview")
-    st.write(
-        "AirAware is a Digital Twin system where each room is represented as a live virtual entity. "
-        "It simulates real-time air quality sensor behavior, applies machine learning to forecast AQI "
-        "for the next hour, and supports both tenants and owners with actionable insights."
+def render_sidebar_controls(data_store_ready: bool) -> bool:
+    st.sidebar.header("Controls")
+    st.sidebar.caption(
+        "Live readings advance automatically (simulated polling). "
+        "Manual refresh applies another drift step from the last state per room."
     )
-    st.markdown("### 🔁 System Flow")
-    st.markdown(
-        "**IoT/Data → Data Processing → Machine Learning → Digital Twin → Dashboard**"
-    )
-    st.divider()
+    refresh_clicked = st.sidebar.button("Refresh live data", use_container_width=True)
+    if data_store_ready:
+        st.sidebar.caption(f"Rooms in memory: {len(ROOMS)}")
+    return refresh_clicked
 
 
 def main() -> None:
     """Application entry point."""
     setup_page()
-    role, refresh_clicked = render_sidebar_controls()
 
-    # Session holds Digital Twin snapshots; evolve on refresh from previous live metrics.
+    st_autorefresh(interval=5000, key="auto_refresh")
+
+    refresh_clicked = render_sidebar_controls("data_store" in st.session_state)
+
     if "data_store" not in st.session_state:
         st.session_state["data_store"] = get_sensor_data(None)
         st.session_state["last_update"] = datetime.now()
-    elif refresh_clicked:
+    else:
         st.session_state["data_store"] = get_sensor_data(st.session_state["data_store"])
         st.session_state["last_update"] = datetime.now()
 
-    # One inference pass for all rooms so owner/tenant views share the same twin snapshot.
+    if refresh_clicked:
+        st.session_state["data_store"] = get_sensor_data(st.session_state["data_store"])
+        st.session_state["last_update"] = datetime.now()
+
     hydrate_predictions(st.session_state["data_store"])
+    weights = get_ml_model()
 
     render_status_bar(st.session_state["last_update"])
-    render_system_overview()
+    st.info("Live simulation updates approximately every 5 seconds; use **Refresh live data** for an immediate step.")
 
-    if role == "Tenant":
+    st.markdown("### Model Input Data (Features)")
+
+    sample_inputs = []
+    for room in ROOMS:
+        cur = st.session_state["data_store"][room]["current"]
+        sample_inputs.append(
+            {
+                "Room": room,
+                "AQI": cur["aqi"],
+                "Temperature": cur["temperature"],
+                "Humidity": cur["humidity"],
+            }
+        )
+
+    df_inputs = pd.DataFrame(sample_inputs)
+    st.dataframe(df_inputs)
+
+    render_system_architecture()
+
+    st.markdown("## Layer documentation")
+    d1, d2 = st.columns(2)
+    with d1:
+        render_data_source_layer()
+    with d2:
+        render_data_processing_layer()
+
+    render_machine_learning_section(weights)
+    render_system_modules()
+    render_model_evaluation(weights)
+    render_simulation_engine()
+    render_visualization_layer_note()
+
+    tab_tenant, tab_owner = st.tabs(["Tenant dashboard", "Owner dashboard"])
+    with tab_tenant:
         tenant_dashboard(st.session_state["data_store"])
-    else:
+    with tab_owner:
         owner_dashboard(st.session_state["data_store"])
 
     st.markdown("---")
-    st.caption("Developed as a Digital Twin + AI system for smart air quality monitoring")
+    st.caption("AirAware — Digital Twin system development demonstration (Streamlit)")
 
 
 if __name__ == "__main__":
